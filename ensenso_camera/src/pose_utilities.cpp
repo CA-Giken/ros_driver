@@ -82,7 +82,9 @@ void writeTransformToNxLib(tf2::Transform const& transform, NxLibItem const& nod
   {
     // ROS transformation is in meters, NxLib expects it to be in millimeters.
     auto origin = transform.getOrigin();
-    origin *= 1000;
+//  SmaBo assumes mm
+//    origin *= 1000;
+//
     node[itmTranslation][0] = origin.x();
     node[itmTranslation][1] = origin.y();
     node[itmTranslation][2] = origin.z();
@@ -145,9 +147,10 @@ tf2::Transform transformFromNxLib(NxLibItem const& node)
 {
   tf2::Transform transform;
 
-  // NxLib transformation is in millimeters, ROS expects it to be in meters.
   tf2::Vector3 origin = vector3FromNxLib(node[itmTranslation]);
-  origin /= 1000;
+//  SmaBo assumes the length as mm
+//  origin /= 1000;
+//
   transform.setOrigin(origin);
 
   tf2::Quaternion rotation(vector3FromNxLib(node[itmRotation][itmAxis]), node[itmRotation][itmAngle].asDouble());

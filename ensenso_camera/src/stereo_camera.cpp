@@ -6,6 +6,8 @@
 #include "ensenso_camera/pose_utilities.h"
 #include "ensenso_camera/stereo_camera_helpers.h"
 
+#include <iostream>
+
 StereoCamera::StereoCamera(ensenso::ros::NodeHandle& nh, CameraParameters params) : Camera(nh, std::move(params))
 {
   leftCameraInfo = ensenso::std::make_shared<sensor_msgs::msg::CameraInfo>();
@@ -275,10 +277,6 @@ void StereoCamera::onRequestData(ensenso::action::RequestDataGoalConstPtr const&
 
   loadParameterSet(goal->parameter_set, computeDisparityMap ? projectorOn : projectorOff);
   ensenso::ros::Time imageTimestamp = capture();
-
-  // Auto values like auto exposure might have changed. Save the parameters so that the updated values are used when
-  // capturing the next time.
-  saveParameterSet(goal->parameter_set, false);
 
   PREEMPT_ACTION_IF_REQUESTED
 
@@ -567,6 +565,21 @@ void StereoCamera::onLocatePattern(ensenso::action::LocatePatternGoalConstPtr co
 
     PREEMPT_ACTION_IF_REQUESTED
 
+//Begin added by KZ
+    auto rawImages = imagePairsFromNxLibNode(cameraNode[itmImages][itmRaw], params.cameraFrame, params.isFileCamera);
+
+    leftCameraInfo->header.stamp = rawImages[0].first->header.stamp;
+    if (hasRightCamera())
+    {
+      rightCameraInfo->header.stamp = leftCameraInfo->header.stamp;
+    }
+
+    leftRawImagePublisher.publish(rawImages[0].first, leftCameraInfo);
+    if (hasRightCamera()){
+      rightRawImagePublisher.publish(rawImages[0].second, rightCameraInfo);
+    }
+//End added by KZ
+
     if (i == (numberOfShots - 1))
     {
       // The last image has been captured.
@@ -574,28 +587,34 @@ void StereoCamera::onLocatePattern(ensenso::action::LocatePatternGoalConstPtr co
       locatePatternServer->publishFeedback(feedback);
     }
 
-    bool clearBuffer = (i == 0);
-    patterns = collectPattern(clearBuffer);
-    if (patterns.empty())
-    {
+    try{
+      bool clearBuffer = (i == 0);
+      patterns = collectPattern(clearBuffer);
+    }
+    catch (NxLibException& e){
+      std::cout<<"on Locate Pattern catch exception"<<"\n";
+      std::cout<<e.getErrorText()<<"\n";
+      std::cout<<e.getItemPath()<<"\n";
+      return;
+    }
+/*    if (patterns.empty()){
       result.found_pattern = false;
       locatePatternServer->setSucceeded(std::move(result));
       return;
     }
-
-    if (patterns.size() > 1)
-    {
+    if (patterns.size() > 1){
       // Cannot average multiple shots of multiple patterns. We will cancel the capturing and estimate the pose of each
       // pattern individually.
       break;
-    }
+    }*/
   }
 
   result.found_pattern = true;
-  result.patterns.resize(patterns.size());
-  for (size_t i = 0; i < patterns.size(); i++)
-  {
-    patterns[i].writeToMessage(result.patterns[i]);
+  if (!patterns.empty()){
+    result.patterns.resize(patterns.size());
+    for (size_t i = 0; i < patterns.size(); i++){
+      patterns[i].writeToMessage(result.patterns[i]);
+    }
   }
 
   PREEMPT_ACTION_IF_REQUESTED
@@ -608,7 +627,7 @@ void StereoCamera::onLocatePattern(ensenso::action::LocatePatternGoalConstPtr co
 
   result.frame = patternFrame;
 
-  if (patterns.size() > 1)
+  if (!patterns.empty() && patterns.size() > 1)
   {
     // Estimate the pose of all the patterns we found.
     auto patternPoses = estimatePatternPoses(imageTimestamp, patternFrame);
@@ -616,6 +635,9 @@ void StereoCamera::onLocatePattern(ensenso::action::LocatePatternGoalConstPtr co
     result.pattern_poses.resize(patternPoses.size());
     for (size_t i = 0; i < patternPoses.size(); i++)
     {
+//      patternPoses[i].pose.position.x*=1000;
+//      patternPoses[i].pose.position.y*=1000;
+//      patternPoses[i].pose.position.z*=1000;
       result.pattern_poses[i] = patternPoses[i];
     }
   }
@@ -625,6 +647,9 @@ void StereoCamera::onLocatePattern(ensenso::action::LocatePatternGoalConstPtr co
     auto patternPose = estimatePatternPose(imageTimestamp, patternFrame);
 
     result.pattern_poses.resize(1);
+//    patternPose.pose.position.x*=1000;
+//    patternPose.pose.position.y*=1000;
+//    patternPose.pose.position.z*=1000;
     result.pattern_poses[0] = patternPose;
   }
 
@@ -938,11 +963,11 @@ void StereoCamera::onCalibrateHandEye(ensenso::action::CalibrateHandEyeGoalConst
     if (calibrateHandEye.result()[itmTime].exists())
     {
       // Fallback for NxLib < 4.0.
-      result.calibration_time = calibrateHandEye.result()[itmTime].asDouble() / 1000;
+      result.calibration_time = calibrateHandEye.result()[itmTime].asDouble(); // / 1000;  As mm according to SmaBo 
     }
     else
     {
-      result.calibration_time = calibrateHandEye.slot()[itmStatus][itmTime].asDouble() / 1000;
+      result.calibration_time = calibrateHandEye.slot()[itmStatus][itmTime].asDouble(); // / 1000; As mm according to SmaBo 
     }
 
     result.number_of_iterations = calibrateHandEye.result()[itmIterations].asInt();
@@ -1339,7 +1364,7 @@ std::vector<StereoCalibrationPattern> StereoCamera::collectPattern(bool clearBuf
         return {};
       }
     }
-    throw;
+    throw e;
   }
 
   if (!collectPattern.result()[itmStereo].exists())
@@ -1434,8 +1459,7 @@ std::vector<geometry_msgs::msg::PoseStamped> StereoCamera::estimatePatternPoses(
   std::vector<geometry_msgs::msg::PoseStamped> result;
   result.reserve(patterns.count());
 
-  for (int i = 0; i < patterns.count(); i++)
-  {
+  for (int i = 0; i < patterns.count(); i++) {
     result.push_back(stampedPoseFromNxLib(patterns[i][itmPatternPose], targetFrame, imageTimestamp));
   }
 
@@ -1493,7 +1517,7 @@ void StereoCamera::fillCameraInfoFromNxLib(sensor_msgs::msg::CameraInfoPtr const
   {
     // Add the offset of the right camera relative to the left one to the projection matrix.
     double fx = stereoCalibrationNode[itmCamera][0][0].asDouble();
-    double baseline = cameraNode[itmCalibration][itmStereo][itmBaseline].asDouble() / 1000.0;
+    double baseline = cameraNode[itmCalibration][itmStereo][itmBaseline].asDouble(); // / 1000.0;//As mm according to SmaBo 
     GET_P_MATRIX(info)[3] = -fx * baseline;
   }
 

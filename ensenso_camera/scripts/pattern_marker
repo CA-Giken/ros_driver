@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import rospy
+import tf
+import tf2_ros
 import sys
 
 import ensenso_camera.ros2 as ros2py
@@ -9,10 +11,12 @@ from tf import transformations
 from ensenso_camera_msgs.msg import Parameter
 
 from visualization_msgs.msg import Marker
+from geometry_msgs.msg import TransformStamped
+
 
 LocatePattern = ros2py.import_action("ensenso_camera_msgs", "LocatePattern")
 SetParameter = ros2py.import_action("ensenso_camera_msgs", "SetParameter")
-
+target_frame = "camera/track0"
 
 def _main(node_name):
     node = ros2py.create_node(node_name, args=sys.argv)
@@ -20,6 +24,11 @@ def _main(node_name):
     loop_rate = ros2py.get_param(node, "rate", 2.0)
     parameter_set = ros2py.get_param(node, "parameter_set", "locate_pattern")
     timeout = ros2py.get_param(node, "timeout", 60)
+
+    ###TF
+#    tfBuffer=tf2_ros.Buffer()
+#    listener=tf2_ros.TransformListener(tfBuffer)
+    broadcaster=tf2_ros.StaticTransformBroadcaster()
 
     set_parameter_client = ros2py.create_action_client(node, "set_parameter", SetParameter)
     locate_pattern_client = ros2py.create_action_client(node, "locate_pattern", LocatePattern)
@@ -41,22 +50,23 @@ def _main(node_name):
         if not response.successful():
             node.get_logger().warn("Action was not successful.")
             return
+        print("response",response)
 
         result = response.get_result()
+        print("result",result)
         if result.error.code != 0:
             node.get_logger().error(ros2py.format_error(result.error, "Error while searching for patterns!"))
         elif result.found_pattern:
             node.get_logger().info("Patterns found, publishing marker(s).")
 
-            for i, pattern, pose in zip(range(len(result.patterns)), result.patterns, result.pattern_poses):
+            for pose in result.pattern_poses:
                 pose = pose.pose
-                pattern_thickness = max(0.001, pattern.thickness)
 
                 marker = Marker()
                 marker.header.frame_id = result.frame
                 marker.header.stamp = node.get_clock().now()
                 marker.ns = "calibration_pattern"
-                marker.id = i
+                marker.id = 0
                 marker.type = Marker.CUBE
                 marker.action = Marker.ADD
                 marker.lifetime = ros2py.Duration(2)
@@ -66,9 +76,9 @@ def _main(node_name):
                 marker.color.g = 1.0
                 marker.color.b = 1.0
 
-                marker.scale.x = (pattern.grid_size_x + 1) * pattern.grid_spacing
-                marker.scale.y = (pattern.grid_size_y + 1) * pattern.grid_spacing
-                marker.scale.z = pattern_thickness
+                marker.scale.x = 300  #mm
+                marker.scale.y = 300  #mm
+                marker.scale.z = 10  #mm
 
                 # Calculate the pose of the marker. It is the pose of the pattern, but with an
                 # offset of half the pattern thickness in the pattern's z direction. This is
@@ -79,7 +89,7 @@ def _main(node_name):
                 r = transformations.quaternion_matrix(
                     [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
                 )
-                z_offset = transformations.translation_matrix((0, 0, 0.5 * pattern_thickness))
+                z_offset = transformations.translation_matrix((0, 0, marker.scale.z/2))
 
                 m = transformations.concatenate_matrices(t, r, z_offset)
                 position = transformations.translation_from_matrix(m)
@@ -93,7 +103,16 @@ def _main(node_name):
                 marker.pose.orientation.z = orientation[2]
                 marker.pose.orientation.w = orientation[3]
 
+                print("marker",marker.pose.position.x,marker.pose.position.y,marker.pose.position.z)
+
                 marker_publisher.publish(marker)
+
+                tfs=TransformStamped()
+                tfs.header=marker.header
+                tfs.child_frame_id=target_frame;
+                tfs.transform.translation=marker.pose.position
+                tfs.transform.rotation=marker.pose.orientation
+                broadcaster.sendTransform([tfs])
 
     ros2py.execute_at_rate(node, main_loop, loop_rate)
 
