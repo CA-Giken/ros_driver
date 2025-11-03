@@ -21,9 +21,9 @@ target_frame = "camera/track0"
 def _main(node_name):
     node = ros2py.create_node(node_name, args=sys.argv)
 
-    loop_rate = ros2py.get_param(node, "rate", 2.0)
+    loop_rate = ros2py.get_param(node, "rate", 1.0)
     parameter_set = ros2py.get_param(node, "parameter_set", "locate_pattern")
-    timeout = ros2py.get_param(node, "timeout", 60)
+    timeout = ros2py.get_param(node, "timeout", 10)
 
     ###TF
 #    tfBuffer=tf2_ros.Buffer()
@@ -41,6 +41,7 @@ def _main(node_name):
     parameters = [
         Parameter(key=Parameter.PROJECTOR, bool_value=False),
         Parameter(key=Parameter.FRONT_LIGHT, bool_value=True),
+        Parameter(key=Parameter.EXPOSURE, float_value=700.0),
     ]
     set_parameter_goal = SetParameter.Goal(parameter_set=parameter_set, parameters=parameters)
     ros2py.send_action_goal(node, set_parameter_client, set_parameter_goal)
@@ -74,7 +75,7 @@ def _main(node_name):
                 marker.color.a = 1.0
                 marker.color.r = 1.0
                 marker.color.g = 1.0
-                marker.color.b = 1.0
+                marker.color.b = 0.5
 
                 marker.scale.x = 300  #mm
                 marker.scale.y = 300  #mm
